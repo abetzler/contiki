@@ -50,6 +50,7 @@
 #include "net/rime/rime.h"
 
 #include "sys/node-id.h"
+#include "sys/prng-flash.h"
 #include "cfs-coffee-arch.h"
 #include "cfs/cfs-coffee.h"
 #include "sys/autostart.h"
@@ -294,6 +295,8 @@ main(int argc, char **argv)
   /* Restore node id if such has been stored in external mem */
   node_id_restore();
 #endif /* WITH_TINYOS_AUTO_IDS */
+  
+  prng_flash_restore_seed();
 
   /* for setting "hardcoded" IEEE 802.15.4 MAC addresses */
 #ifdef IEEE_802154_MAC_ADDRESS

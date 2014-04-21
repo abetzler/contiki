@@ -109,6 +109,8 @@ typedef unsigned long off_t;
 
 #define CFS_RAM_CONF_SIZE 4096
 
+#define PRNG_FLASH_SEED_OFFSET             (3 * XMEM_ERASE_UNIT_SIZE)
+
 /*
  * SPI bus configuration for the TMote Sky.
  */
