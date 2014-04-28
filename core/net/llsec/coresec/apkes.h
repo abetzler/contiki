@@ -72,6 +72,12 @@
 #define APKES_SCHEME                    leap_apkes_scheme
 #endif /* APKES_CONF_SCHEME */
 
+#ifdef APKES_CONF_WITH_SCREWED
+#define APKES_WITH_SCREWED              APKES_CONF_WITH_SCREWED
+#else /* APKES_CONF_WITH_SCREWED */
+#define APKES_WITH_SCREWED              0
+#endif /* APKES_CONF_WITH_SCREWED */
+
 /**
  * Structure of a pluggable scheme
  */

@@ -55,6 +55,10 @@
 #include "sys/node-id.h"
 #include <string.h>
 
+#if APKES_WITH_SCREWED
+#include "net/llsec/coresec/screwed.h"
+#endif /* APKES_WITH_SCREWED */
+
 /* Command frame identifiers */
 #define HELLO_IDENTIFIER          0x0A
 #define HELLOACK_IDENTIFIER       0x0B
@@ -143,6 +147,12 @@ apkes_broadcast_hello(void)
 {
   uint8_t *payload;
   
+#if APKES_WITH_SCREWED
+  if(screwed_is_busy()) {
+    return;
+  }
+#endif /* APKES_WITH_SCREWED */
+  
   payload = coresec_prepare_command_frame(HELLO_IDENTIFIER, &linkaddr_null);
   
   /* write payload */
@@ -206,9 +216,15 @@ wait_callback(void *ptr)
   
   expired_wait_timer = (struct wait_timer *) ptr;
   
-  if(expired_wait_timer->neighbor->status == NEIGHBOR_TENTATIVE) {
-    expired_wait_timer->neighbor->status = NEIGHBOR_TENTATIVE_AWAITING_ACK;
-    send_helloack(expired_wait_timer->neighbor);
+  if((expired_wait_timer->neighbor->status == NEIGHBOR_TENTATIVE)
+#if APKES_WITH_SCREWED
+      && !screwed_is_busy()
+#endif /* APKES_WITH_SCREWED */
+      ) {
+      expired_wait_timer->neighbor->status = NEIGHBOR_TENTATIVE_AWAITING_ACK;
+      send_helloack(expired_wait_timer->neighbor);
+  } else {
+    PRINTF("apkes: suppressing HELLOACK\n");
   }
   
   memb_free(&wait_timers_memb, expired_wait_timer);
@@ -243,7 +259,7 @@ on_helloack(struct neighbor *sender, uint8_t *payload)
   uint8_t *secret;
   uint8_t key[NEIGHBOR_PAIRWISE_KEY_LEN];
   
-  PRINTF("apkes: Received HELLOACK\n");
+  PRINTF("apkes: Received HELLOACK with RSSI=%i\n", (int8_t) packetbuf_attr(PACKETBUF_ATTR_RSSI));
   
   neighbor_update_ids(&ids, payload + CHALLENGE_LEN);
   secret = APKES_SCHEME.get_secret_with_helloack_sender(&ids);
@@ -294,14 +310,27 @@ on_helloack(struct neighbor *sender, uint8_t *payload)
 static void
 send_ack(struct neighbor *receiver)
 {
+#if APKES_WITH_SCREWED
+  int8_t piggyback[SCREWED_PIGGYBACK_LEN];
+  
+  if(!screwed_prepare_pong(receiver, piggyback)) {
+    PRINTF("apkes: screwed could not piggyback\n");
+    neighbor_delete(receiver);
+    return;
+  }
+  prepare_update_command(ACK_IDENTIFIER, receiver, (uint8_t *) piggyback, SCREWED_PIGGYBACK_LEN);
+  
+  NETSTACK_MAC.send(screwed_pong, NULL);
+#else /* APKES_WITH_SCREWED */
   prepare_update_command(ACK_IDENTIFIER, receiver, NULL, 0);
   coresec_send_command_frame();
+#endif /* APKES_WITH_SCREWED */
 }
 /*---------------------------------------------------------------------------*/
 static void
 on_ack(struct neighbor *sender, uint8_t *payload)
 {
-  PRINTF("apkes: Received ACK\n");
+  PRINTF("apkes: Received ACK with RSSI=%i\n", (int8_t) packetbuf_attr(PACKETBUF_ATTR_RSSI));
   
   if(!sender
       || (sender->status != NEIGHBOR_TENTATIVE_AWAITING_ACK)
@@ -311,6 +340,15 @@ on_ack(struct neighbor *sender, uint8_t *payload)
   }
   
   neighbor_update(sender, payload);
+#if APKES_WITH_SCREWED
+  neighbor_update(sender, payload + SCREWED_PIGGYBACK_LEN);
+  if(!screwed_ping(sender, (int8_t *) payload)) {
+    neighbor_delete(sender);
+    return;
+  }
+#else  
+  neighbor_update(sender, payload);
+#endif /* APKES_WITH_SCREWED */
 }
 /*---------------------------------------------------------------------------*/
 void
@@ -388,7 +426,11 @@ on_command_frame(uint8_t command_frame_identifier,
     on_updateack(sender, payload);
     break;
   default:
+#if APKES_WITH_SCREWED
+    screwed_on_command_frame(command_frame_identifier, sender, payload);
+#else /* APKES_WITH_SCREWED */
     PRINTF("apkes: Received unknown command with identifier %x \n", command_frame_identifier);
+#endif /* APKES_WITH_SCREWED */
   }
 }
 /*---------------------------------------------------------------------------*/

@@ -148,7 +148,8 @@ delete_expired_neighbors(void)
   while(next) {
     current = next;
     next = list_item_next(current);
-    if(current->expiration_time <= clock_seconds()) {
+    if((current->status <= NEIGHBOR_TENTATIVE_AWAITING_ACK)
+        && current->expiration_time <= clock_seconds()) {
       neighbor_delete(current);
     }
   }
@@ -208,8 +209,10 @@ neighbor_update(struct neighbor *neighbor, uint8_t *data)
   memcpy(&neighbor->broadcast_key, data, NEIGHBOR_BROADCAST_KEY_LEN);
 #endif /* NEIGHBOR_BROADCAST_KEY_LEN */
   
+#if !APKES_WITH_SCREWED
   neighbor_prolong(neighbor);
   apkes_trickle_on_new_neighbor();
+#endif /* APKES_WITH_SCREWED */
   
 #if DEBUG
   {
