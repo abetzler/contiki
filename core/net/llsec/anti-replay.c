@@ -47,7 +47,7 @@
 #include "net/packetbuf.h"
 
 /* This node's current frame counter value */
-static uint32_t counter;
+uint32_t anti_replay_counter;
 
 /*---------------------------------------------------------------------------*/
 void
@@ -55,7 +55,7 @@ anti_replay_set_counter(void)
 {
   frame802154_frame_counter_t reordered_counter;
   
-  reordered_counter.u32 = LLSEC802154_HTONL(++counter);
+  reordered_counter.u32 = LLSEC802154_HTONL(++anti_replay_counter);
   
   packetbuf_set_attr(PACKETBUF_ATTR_FRAME_COUNTER_BYTES_0_1, reordered_counter.u16[0]);
   packetbuf_set_attr(PACKETBUF_ATTR_FRAME_COUNTER_BYTES_2_3, reordered_counter.u16[1]);

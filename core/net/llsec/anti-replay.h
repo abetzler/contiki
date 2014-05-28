@@ -74,6 +74,8 @@ void anti_replay_init_info(struct anti_replay_info *info);
  */
 int anti_replay_was_replayed(struct anti_replay_info *info);
 
+extern uint32_t anti_replay_counter;
+
 #endif /* ANTI_REPLAY_H */
 
 /** @} */
