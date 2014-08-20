@@ -102,10 +102,6 @@
 #define NULLRDC_SEND_802154_ACK 0
 #endif /* NULLRDC_CONF_SEND_802154_ACK */
 
-#if NULLRDC_SEND_802154_ACK
-#include "net/mac/frame802154.h"
-#endif /* NULLRDC_SEND_802154_ACK */
-
 #define ACK_LEN 3
 
 /*---------------------------------------------------------------------------*/
@@ -303,22 +299,17 @@ packet_input(void)
 
 /* TODO We may want to acknowledge only authentic frames */ 
 #if NULLRDC_SEND_802154_ACK
-    {
-      frame802154_t info154;
-      frame802154_parse(original_dataptr, original_datalen, &info154);
-      if(info154.fcf.frame_type == FRAME802154_DATAFRAME &&
-         info154.fcf.ack_required != 0 &&
-         linkaddr_cmp((linkaddr_t *)&info154.dest_addr,
-                      &linkaddr_node_addr)) {
-        uint8_t ackdata[ACK_LEN] = {0, 0, 0};
+    if((packetbuf_attr(PACKETBUF_ATTR_FRAME_TYPE) != FRAME802154_ACKFRAME)
+        && packetbuf_attr(PACKETBUF_ATTR_MAC_ACK)
+        && linkaddr_cmp(packetbuf_addr(PACKETBUF_ADDR_RECEIVER), &linkaddr_node_addr)) {
+      uint8_t ackdata[ACK_LEN] = {0, 0, 0};
 
-        ackdata[0] = FRAME802154_ACKFRAME;
-        ackdata[1] = 0;
-        ackdata[2] = info154.seq;
-        NETSTACK_RADIO.send(ackdata, ACK_LEN);
-      }
+      ackdata[0] = FRAME802154_ACKFRAME;
+      ackdata[1] = 0;
+      ackdata[2] = packetbuf_attr(PACKETBUF_ATTR_PACKET_ID);
+      NETSTACK_RADIO.send(ackdata, ACK_LEN);
     }
-#endif /* NULLRDC_SEND_ACK */
+#endif /* NULLRDC_SEND_802154_ACK */
     if(!duplicate) {
       NETSTACK_MAC.input();
     }

@@ -303,7 +303,7 @@ parse(void)
   security_enabled = (p[0] >> 3) & 1;
 #endif /* LLSEC802154_SECURITY_LEVEL */
   packetbuf_set_attr(PACKETBUF_ATTR_PENDING, (p[0] >> 4) & 1);
-  /* ignore ACK Request */
+  packetbuf_set_attr(PACKETBUF_ATTR_MAC_ACK, (p[0] >> 5) & 1);
   panid_compressed = (p[0] >> 6) & 1;
   
   /* Dest. Addressing Mode | Frame Version | Source Addressing Mode */
