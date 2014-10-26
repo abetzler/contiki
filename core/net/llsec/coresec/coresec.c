@@ -229,6 +229,8 @@ input(void)
       return;
     }
     
+    neighbor_prolong(sender);
+    
     NETSTACK_NETWORK.input();
   }
 }

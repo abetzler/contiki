@@ -43,6 +43,7 @@
  */
 
 #include "net/llsec/coresec/apkes.h"
+#include "net/llsec/coresec/apkes-trickle.h"
 #include "net/llsec/coresec/coresec.h"
 #include "net/llsec/coresec/ebeap.h"
 #include "net/llsec/anti-replay.h"
@@ -50,45 +51,16 @@
 #include "lib/prng.h"
 #include "lib/memb.h"
 #include "lib/random.h"
-#include "sys/etimer.h"
 #include "sys/ctimer.h"
 #include "sys/node-id.h"
 #include <string.h>
-
-#ifdef APKES_CONF_ROUNDS
-#define ROUNDS                    APKES_CONF_ROUNDS
-#else /* APKES_CONF_ROUNDS */
-#define ROUNDS                    6
-#endif /* APKES_CONF_ROUNDS */
-
-#ifdef APKES_CONF_ROUND_DURATION
-#define ROUND_DURATION            APKES_CONF_ROUND_DURATION
-#else /* APKES_CONF_ROUND_DURATION */
-#define ROUND_DURATION            (7 * CLOCK_SECOND)
-#endif /* APKES_CONF_ROUND_DURATION */
-
-#ifdef APKES_CONF_MAX_TENTATIVE_NEIGHBORS
-#define MAX_TENTATIVE_NEIGHBORS   APKES_CONF_MAX_TENTATIVE_NEIGHBORS
-#else /* APKES_CONF_MAX_TENTATIVE_NEIGHBORS */
-#define MAX_TENTATIVE_NEIGHBORS   2
-#endif /* APKES_CONF_MAX_TENTATIVE_NEIGHBORS */
-
-#ifdef APKES_CONF_MAX_WAITING_PERIOD
-#define MAX_WAITING_PERIOD        APKES_CONF_MAX_WAITING_PERIOD
-#else /* APKES_CONF_MAX_WAITING_PERIOD */
-#define MAX_WAITING_PERIOD        (ROUND_DURATION - (2 * CLOCK_SECOND))
-#endif /* APKES_CONF_MAX_WAITING_PERIOD */
-
-#ifdef APKES_CONF_ACK_DELAY
-#define ACK_DELAY                 APKES_CONF_ACK_DELAY
-#else /* APKES_CONF_ACK_DELAY */
-#define ACK_DELAY                 (5 * CLOCK_SECOND)
-#endif /* APKES_CONF_ACK_DELAY */
 
 /* Command frame identifiers */
 #define HELLO_IDENTIFIER          0x0A
 #define HELLOACK_IDENTIFIER       0x0B
 #define ACK_IDENTIFIER            0x0C
+#define UPDATE_IDENTIFIER         0x0E
+#define UPDATEACK_IDENTIFIER      0x0F
 
 #define CHALLENGE_LEN             (NEIGHBOR_PAIRWISE_KEY_LEN/2)
 
@@ -108,13 +80,11 @@ struct wait_timer {
 static void wait_callback(void *ptr);
 static void send_helloack(struct neighbor *receiver);
 static void send_ack(struct neighbor *receiver);
+static void send_updateack(struct neighbor *receiver);
 
-MEMB(wait_timers_memb, struct wait_timer, MAX_TENTATIVE_NEIGHBORS);
+MEMB(wait_timers_memb, struct wait_timer, APKES_MAX_TENTATIVE_NEIGHBORS);
 /* A random challenge, which will be attached to HELLO commands */
 static uint8_t our_challenge[CHALLENGE_LEN];
-PROCESS(apkes_process, "apkes_process");
-/* The network layer will be started after bootstrapping */
-static llsec_on_bootstrapped_t on_bootstrapped;
 
 /*---------------------------------------------------------------------------*/
 static uint8_t *
@@ -168,8 +138,8 @@ generate_pairwise_key(uint8_t *result, uint8_t *shared_secret)
   aes_128_padded_encrypt(result, NEIGHBOR_PAIRWISE_KEY_LEN);
 }
 /*---------------------------------------------------------------------------*/
-static void
-broadcast_hello(void)
+void
+apkes_broadcast_hello(void)
 {
   uint8_t *payload;
   
@@ -216,8 +186,8 @@ on_hello(struct neighbor *sender, uint8_t *payload)
   prng_rand(sender->metadata + CHALLENGE_LEN, CHALLENGE_LEN);
   
   /* Set up waiting period */
-  waiting_period = (MAX_WAITING_PERIOD * (uint32_t) random_rand()) / RANDOM_RAND_MAX;
-  sender->expiration_time = clock_seconds() + ((MAX_WAITING_PERIOD + ACK_DELAY) / CLOCK_SECOND);
+  waiting_period = (APKES_MAX_WAITING_PERIOD * (uint32_t) random_rand()) / RANDOM_RAND_MAX;
+  sender->expiration_time = clock_seconds() + ((APKES_MAX_WAITING_PERIOD + APKES_ACK_DELAY) / CLOCK_SECOND);
   free_wait_timer->neighbor = sender;
   ctimer_set(&free_wait_timer->ctimer,
       waiting_period,
@@ -343,6 +313,49 @@ on_ack(struct neighbor *sender, uint8_t *payload)
   neighbor_update(sender, payload);
 }
 /*---------------------------------------------------------------------------*/
+void
+apkes_send_update(struct neighbor *receiver)
+{
+  prepare_update_command(UPDATE_IDENTIFIER, receiver, NULL, 0);
+  coresec_send_command_frame();
+}
+/*---------------------------------------------------------------------------*/
+static void
+on_update(struct neighbor *sender, uint8_t *payload)
+{
+  PRINTF("apkes: Received UPDATE\n");
+  
+  if(!sender
+      || !coresec_decrypt_verify_unicast(sender->pairwise_key)
+      || anti_replay_was_replayed(&sender->anti_replay_info)) {
+    return;
+  }
+  
+  send_updateack(sender);
+  neighbor_update(sender, payload);
+}
+/*---------------------------------------------------------------------------*/
+static void
+send_updateack(struct neighbor *receiver)
+{
+  prepare_update_command(UPDATEACK_IDENTIFIER, receiver, NULL, 0);
+  coresec_send_command_frame();
+}
+/*---------------------------------------------------------------------------*/
+static void
+on_updateack(struct neighbor *sender, uint8_t *payload)
+{
+  PRINTF("apkes: Received UPDATEACK\n");
+  
+  if(!sender
+      || !coresec_decrypt_verify_unicast(sender->pairwise_key)
+      || anti_replay_was_replayed(&sender->anti_replay_info)) {
+    return;
+  }
+  
+  neighbor_update(sender, payload);
+}
+/*---------------------------------------------------------------------------*/
 static void
 on_command_frame(uint8_t command_frame_identifier,
     struct neighbor *sender,
@@ -368,51 +381,27 @@ on_command_frame(uint8_t command_frame_identifier,
   case ACK_IDENTIFIER:
     on_ack(sender, payload);
     break;
+  case UPDATE_IDENTIFIER:
+    on_update(sender, payload);
+    break;
+  case UPDATEACK_IDENTIFIER:
+    on_updateack(sender, payload);
+    break;
   default:
     PRINTF("apkes: Received unknown command with identifier %x \n", command_frame_identifier);
   }
 }
 /*---------------------------------------------------------------------------*/
-PROCESS_THREAD(apkes_process, ev, data)
+void
+apkes_init(void)
 {
-  static struct etimer round_timer;
-  static uint8_t i;
-  
-  PROCESS_BEGIN();
-  
-  etimer_set(&round_timer, ROUND_DURATION);
-  for(i = 1; i <= ROUNDS; i++) {
-    broadcast_hello();
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&round_timer));
-    if(i != ROUNDS) {
-      etimer_reset(&round_timer);
-    }
-  }
-  
-  on_bootstrapped();
-  on_bootstrapped = NULL;
-  
-  PROCESS_END();
-}
-/*---------------------------------------------------------------------------*/
-static void
-bootstrap(llsec_on_bootstrapped_t on_bootstrapped_param)
-{
-  on_bootstrapped = on_bootstrapped_param;
   memb_init(&wait_timers_memb);
   APKES_SCHEME.init();
-  process_start(&apkes_process, NULL);
-}
-/*---------------------------------------------------------------------------*/
-static int
-is_bootstrapped()
-{
-  return on_bootstrapped == NULL;
 }
 /*---------------------------------------------------------------------------*/
 const struct coresec_scheme apkes_coresec_scheme = {
-  is_bootstrapped,
-  bootstrap,
+  apkes_trickle_is_bootstrapped,
+  apkes_trickle_bootstrap,
   on_command_frame
 };
 /*---------------------------------------------------------------------------*/

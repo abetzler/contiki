@@ -44,6 +44,7 @@
 
 #include "net/llsec/coresec/leap.h"
 #include "net/llsec/coresec/apkes-flash.h"
+#include "net/llsec/coresec/apkes-trickle.h"
 #include "sys/ctimer.h"
 #include "lib/aes-128.h"
 #include <string.h>
@@ -108,6 +109,8 @@ erase(void *ptr)
   apkes_flash_erase_keying_material();
   
   PRINTF("leap: erased master key\n");
+  
+  apkes_trickle_stop();
 }
 /*---------------------------------------------------------------------------*/
 static void

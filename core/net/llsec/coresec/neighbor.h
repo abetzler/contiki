@@ -100,29 +100,22 @@ struct neighbor {
   
   enum neighbor_status status;
   
+  /**
+   * Time in seconds when this neighbor expires
+   */
+  clock_time_t expiration_time;
+  
   /** Index of this neighbor */
   uint8_t local_index;
   
   /** Index on the neighboring node (permanent neighbors only) */
   uint8_t foreign_index;
   
-  union {
-    
-    /**
-     * Time in seconds when this neighbor expires (tentative neighbors only)
-     * TODO Could be used to automatically delete dead permanent neighbors
-     */
-    clock_time_t expiration_time;
-    
-    /** (permanent neighbors only) */
-    struct anti_replay_info anti_replay_info;
-  };
+  /** (permanent neighbors only) */
+  struct anti_replay_info anti_replay_info;
   
   union {
   
-    /** Pointer to metadata (tentative neighbors only) */
-    void *metadata_ptr;
-    
     /** Metadata (tentative neighbors only) */
     uint8_t metadata[NEIGHBOR_PAIRWISE_KEY_LEN];
     
@@ -136,6 +129,8 @@ struct neighbor {
 #endif /* NEIGHBOR_BROADCAST_KEY_LEN */
 };
 
+int neighbor_count(void);
+void neighbor_prolong(struct neighbor *neighbor);
 struct neighbor *neighbor_head(void);
 struct neighbor *neighbor_next(struct neighbor *previous);
 struct neighbor *neighbor_new(void);

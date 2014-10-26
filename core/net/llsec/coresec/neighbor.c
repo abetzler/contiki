@@ -43,11 +43,40 @@
  */
 
 #include "net/llsec/coresec/neighbor.h"
-#include "net/llsec/anti-replay.h"
+#include "net/llsec/coresec/apkes.h"
+#include "net/llsec/coresec/apkes-trickle.h"
+#include "net/llsec/coresec/coresec.h"
+#include "net/llsec/ccm-star.h"
+#include "net/packetbuf.h"
 #include "lib/memb.h"
 #include "lib/list.h"
-#include "net/packetbuf.h"
-#include <string.h>
+#include "sys/etimer.h"
+
+#ifdef NEIGHBOR_CONF_LIFETIME
+#define LIFETIME                 NEIGHBOR_CONF_LIFETIME
+#else /* NEIGHBOR_CONF_LIFETIME */
+#define LIFETIME                 (60 * 60) /* seconds */
+#endif /* NEIGHBOR_CONF_LIFETIME */
+
+#ifdef NEIGHBOR_CONF_UPDATE_CHECK_INTERVAL
+#define UPDATE_CHECK_INTERVAL    NEIGHBOR_CONF_UPDATE_CHECK_INTERVAL
+#else /* NEIGHBOR_CONF_UPDATE_CHECK_INTERVAL */
+#define UPDATE_CHECK_INTERVAL    (60 * 3) /* seconds */
+#endif /* NEIGHBOR_CONF_UPDATE_CHECK_INTERVAL */
+
+#ifdef NEIGHBOR_CONF_MAX_UPDATES
+#define MAX_UPDATES              NEIGHBOR_CONF_MAX_UPDATES
+#else /* NEIGHBOR_CONF_MAX_UPDATES */
+#define MAX_UPDATES              3
+#endif /* NEIGHBOR_CONF_MAX_UPDATES */
+
+#ifdef NEIGHBOR_CONF_UPDATEACK_WAITING_PERIOD
+#define UPDATEACK_WAITING_PERIOD NEIGHBOR_CONF_UPDATEACK_WAITING_PERIOD
+#else /* NEIGHBOR_CONF_UPDATEACK_WAITING_PERIOD */
+#define UPDATEACK_WAITING_PERIOD 5 /* seconds */
+#endif /* NEIGHBOR_CONF_UPDATEACK_WAITING_PERIOD */
+
+#define LAZY_THRESHOLD           (NEIGHBOR_MAX - APKES_MAX_TENTATIVE_NEIGHBORS)
 
 #define DEBUG 0
 #if DEBUG
@@ -59,7 +88,20 @@
 
 MEMB(neighbors_memb, struct neighbor, NEIGHBOR_MAX);
 LIST(neighbor_list);
+PROCESS(update_process, "update_process");
 
+/*---------------------------------------------------------------------------*/
+int
+neighbor_count(void)
+{
+  return list_length(neighbor_list);
+}
+/*---------------------------------------------------------------------------*/
+void
+neighbor_prolong(struct neighbor *neighbor)
+{
+  neighbor->expiration_time = clock_seconds() + LIFETIME;
+}
 /*---------------------------------------------------------------------------*/
 struct neighbor *
 neighbor_head(void)
@@ -97,7 +139,7 @@ add(struct neighbor *new_neighbor)
 }
 /*---------------------------------------------------------------------------*/
 static void
-delete_expired_tentatives(void)
+delete_expired_neighbors(void)
 {
   struct neighbor *next;
   struct neighbor *current;
@@ -106,7 +148,7 @@ delete_expired_tentatives(void)
   while(next) {
     current = next;
     next = list_item_next(current);
-    if(current->status && (current->expiration_time <= clock_seconds())) {
+    if(current->expiration_time <= clock_seconds()) {
       neighbor_delete(current);
     }
   }
@@ -117,7 +159,7 @@ neighbor_new(void)
 {
   struct neighbor *new_neighbor;
   
-  delete_expired_tentatives();
+  delete_expired_neighbors();
   new_neighbor = memb_alloc(&neighbors_memb);
   if(!new_neighbor) {
     PRINTF("neighbor: ERROR\n");
@@ -148,7 +190,9 @@ neighbor_update_ids(struct neighbor_ids *ids, void *short_addr)
   memcpy(ids->extended_addr.u8,
       packetbuf_addr(PACKETBUF_ADDR_SENDER)->u8,
       sizeof(linkaddr_t));
-  memcpy(&ids->short_addr, short_addr, NEIGHBOR_SHORT_ADDR_LEN);
+  memcpy(&ids->short_addr,
+      short_addr,
+      NEIGHBOR_SHORT_ADDR_LEN);
 }
 /*---------------------------------------------------------------------------*/
 void
@@ -163,6 +207,9 @@ neighbor_update(struct neighbor *neighbor, uint8_t *data)
 #if NEIGHBOR_BROADCAST_KEY_LEN
   memcpy(&neighbor->broadcast_key, data, NEIGHBOR_BROADCAST_KEY_LEN);
 #endif /* NEIGHBOR_BROADCAST_KEY_LEN */
+  
+  neighbor_prolong(neighbor);
+  apkes_trickle_on_new_neighbor();
   
 #if DEBUG
   {
@@ -194,11 +241,77 @@ neighbor_delete(struct neighbor *neighbor)
   memb_free(&neighbors_memb, neighbor);
 }
 /*---------------------------------------------------------------------------*/
+static int
+shall_update(struct neighbor *neighbor)
+{
+  clock_time_t now;
+  
+  now = clock_seconds();
+  
+  if(neighbor_count() <= LAZY_THRESHOLD) {
+    /* We have enough slots available so do not bother with UPDATEs */
+    neighbor_prolong(neighbor);
+    return 0;
+  }
+  
+  if(now > neighbor->expiration_time) {
+    /* 
+     * We tried to update him without success.
+     * This slot will be freed when delete_expired_neighbors is called.
+     */
+    return 0;
+  }
+  
+  if(neighbor->expiration_time - now
+      > UPDATE_CHECK_INTERVAL + NEIGHBOR_MAX * UPDATEACK_WAITING_PERIOD * MAX_UPDATES) {
+    /* wait for next interval */
+    return 0;
+  }
+  
+  /* send UPDATE */
+  return 1;
+}
+/*---------------------------------------------------------------------------*/
+PROCESS_THREAD(update_process, ev, data)
+{
+  static struct etimer update_check_timer;
+  static struct etimer retry_timer;
+  static struct neighbor *next;
+  static uint8_t max_retries;
+  
+  PROCESS_BEGIN();
+  
+  PRINTF("neighbor: Started update_process\n");
+  etimer_set(&update_check_timer, UPDATE_CHECK_INTERVAL * CLOCK_SECOND);
+  
+  while(1) {
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&update_check_timer));
+    
+    next = neighbor_head();
+    while(next) {
+      max_retries = MAX_UPDATES;
+      while(shall_update(next) && max_retries--) {
+        PRINTF("neighbor: Sending UPDATE\n");
+        apkes_send_update(next);
+        etimer_set(&retry_timer, UPDATEACK_WAITING_PERIOD * CLOCK_SECOND);
+        PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&retry_timer));
+      }
+      next = list_item_next(next);
+    }
+    
+    delete_expired_neighbors();
+    etimer_reset(&update_check_timer);
+  }
+  
+  PROCESS_END();
+}
+/*---------------------------------------------------------------------------*/
 void
 neighbor_init(void)
 {
   memb_init(&neighbors_memb);
   list_init(neighbor_list);
+  process_start(&update_process, NULL);
 }
 /*---------------------------------------------------------------------------*/
 

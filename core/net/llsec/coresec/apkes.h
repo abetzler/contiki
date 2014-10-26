@@ -47,6 +47,24 @@
 
 #include "net/llsec/coresec/coresec.h"
 
+#ifdef APKES_CONF_MAX_WAITING_PERIOD
+#define APKES_MAX_WAITING_PERIOD        APKES_CONF_MAX_WAITING_PERIOD
+#else /* APKES_CONF_MAX_WAITING_PERIOD */
+#define APKES_MAX_WAITING_PERIOD        (20 * CLOCK_SECOND)
+#endif /* APKES_CONF_MAX_WAITING_PERIOD */
+
+#ifdef APKES_CONF_ACK_DELAY
+#define APKES_ACK_DELAY                 APKES_CONF_ACK_DELAY
+#else /* APKES_CONF_ACK_DELAY */
+#define APKES_ACK_DELAY                 (5 * CLOCK_SECOND)
+#endif /* APKES_CONF_ACK_DELAY */
+
+#ifdef APKES_CONF_MAX_TENTATIVE_NEIGHBORS
+#define APKES_MAX_TENTATIVE_NEIGHBORS   APKES_CONF_MAX_TENTATIVE_NEIGHBORS
+#else /* APKES_CONF_MAX_TENTATIVE_NEIGHBORS */
+#define APKES_MAX_TENTATIVE_NEIGHBORS   3
+#endif /* APKES_CONF_MAX_TENTATIVE_NEIGHBORS */
+
 /* Defines the plugged-in scheme */
 #ifdef APKES_CONF_SCHEME
 #define APKES_SCHEME                    APKES_CONF_SCHEME
@@ -77,6 +95,10 @@ struct apkes_scheme {
 
 extern const struct apkes_scheme APKES_SCHEME;
 extern const struct coresec_scheme apkes_coresec_scheme;
+
+void apkes_broadcast_hello(void);
+void apkes_init(void);
+void apkes_send_update(struct neighbor *receiver);
 
 #endif /* APKES_H_ */
 
