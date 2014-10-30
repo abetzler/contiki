@@ -312,6 +312,8 @@ next_phase(void *ptr)
   ping_pong_mic(PONG_SEC_LVL, context.next_pong_mic);
   
   if(context.is_pinger) {
+    /* Gives the PONGer time for switching the channel */
+    clock_wait(PING_DELAY);
     send_ping_pong(PING_IDENTIFIER, context.next_ping_mic);
   }
 }
