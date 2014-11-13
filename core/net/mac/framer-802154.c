@@ -196,7 +196,10 @@ create(void)
   /* Source PAN ID (always compressed) */
   
   /* Source address */
-  create_addr(p, &linkaddr_node_addr);
+  create_addr(p,
+      linkaddr_cmp(packetbuf_addr(PACKETBUF_ADDR_SENDER), &linkaddr_null)
+      ? &linkaddr_node_addr
+      : packetbuf_addr(PACKETBUF_ADDR_SENDER));
   p += LINKADDR_SIZE;
   
 #if LLSEC802154_SECURITY_LEVEL
