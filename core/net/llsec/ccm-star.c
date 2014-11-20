@@ -100,13 +100,15 @@ mic(const uint8_t *extended_source_address,
   uint8_t *a;
 #if LLSEC802154_USES_ENCRYPTION
   uint8_t shall_encrypt;
+  uint8_t unencrypted_bytes;
   uint8_t m_len;
   uint8_t *m;
   
   shall_encrypt = packetbuf_attr(PACKETBUF_ATTR_SECURITY_LEVEL) & (1 << 2);
   if(shall_encrypt) {
-    a_len = packetbuf_hdrlen();
-    m_len = packetbuf_datalen();
+    unencrypted_bytes = packetbuf_attr(PACKETBUF_ATTR_UNENCRYPTED_PAYLOAD_BYTES);
+    a_len = packetbuf_hdrlen() + unencrypted_bytes;
+    m_len = packetbuf_datalen() - unencrypted_bytes;
   } else {
     a_len = packetbuf_totlen();
     m_len = 0;
@@ -165,13 +167,16 @@ mic(const uint8_t *extended_source_address,
 static void
 ctr(const uint8_t *extended_source_address)
 {
+  uint8_t unencrypted_bytes;
   uint8_t m_len;
   uint8_t *m;
   uint8_t pos;
   uint8_t counter;
   
-  m_len = packetbuf_datalen();
+  unencrypted_bytes = packetbuf_attr(PACKETBUF_ATTR_UNENCRYPTED_PAYLOAD_BYTES);
+  m_len = packetbuf_datalen() - unencrypted_bytes;
   m = (uint8_t *) packetbuf_dataptr();
+  m += unencrypted_bytes;
   
   pos = 0;
   counter = 1;
