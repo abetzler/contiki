@@ -41,6 +41,10 @@
 
 #include "net/mac/framer.h"
 
+/**
+ * \brief Parses without calling packetbuf_hdrreduce
+ */
+int framer_802154_just_parse(void);
 extern const struct framer framer_802154;
 
 #endif /* FRAMER_802154_H_ */

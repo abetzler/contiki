@@ -277,6 +277,24 @@ parse_addr(uint8_t *p, uint8_t mode, uint8_t type)
 static int
 parse(void)
 {
+  int hdr_len;
+  
+  hdr_len = framer_802154_just_parse();
+  if(!packetbuf_hdrreduce(hdr_len)) {
+    return FRAMER_FAILED;
+  }
+  
+  PRINTF("15.4-IN: %2X", packetbuf_attr(PACKETBUF_ATTR_FRAME_TYPE));
+  PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_SENDER));
+  PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
+  PRINTF("%d %u (%u)\n", hdr_len, packetbuf_datalen(), packetbuf_totlen());
+  
+  return hdr_len;
+}
+/*---------------------------------------------------------------------------*/
+int
+framer_802154_just_parse(void)
+{
   uint8_t *hdrptr;
   uint8_t *p;
   int panid_compressed;
@@ -373,15 +391,6 @@ parse(void)
 #endif /* LLSEC802154_USES_EXPLICIT_KEYS */
   }
 #endif /* LLSEC802154_SECURITY_LEVEL */
-
-  if(!packetbuf_hdrreduce(p - hdrptr)) {
-    return FRAMER_FAILED;
-  }
-  
-  PRINTF("15.4-IN: %2X", packetbuf_attr(PACKETBUF_ATTR_FRAME_TYPE));
-  PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_SENDER));
-  PRINTADDR(packetbuf_addr(PACKETBUF_ADDR_RECEIVER));
-  PRINTF("%d %u (%u)\n", p - hdrptr, packetbuf_datalen(), packetbuf_totlen());
   
   return p - hdrptr;
 }
