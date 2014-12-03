@@ -49,6 +49,7 @@
 #include "net/netstack.h"
 #include "net/packetbuf.h"
 #include "net/queuebuf.h"
+#include "dev/watchdog.h"
 #include <string.h>
 
 #define QUOTE(name)            #name
@@ -70,6 +71,10 @@ coresec_add_security_header(uint8_t sec_lvl)
 {
   packetbuf_set_attr(PACKETBUF_ATTR_SECURITY_LEVEL, sec_lvl);
   anti_replay_set_counter();
+  
+  if(anti_replay_get_counter() == 0xFFFFFFFF) {
+    watchdog_reboot();
+  }
 }
 /*---------------------------------------------------------------------------*/
 uint8_t *

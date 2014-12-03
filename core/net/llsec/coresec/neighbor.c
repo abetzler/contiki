@@ -45,6 +45,7 @@
 #include "net/llsec/coresec/neighbor.h"
 #include "net/llsec/coresec/apkes.h"
 #include "net/llsec/coresec/apkes-trickle.h"
+#include "net/llsec/coresec/apkes-flash.h"
 #include "net/llsec/coresec/coresec.h"
 #include "net/llsec/ccm-star.h"
 #include "net/packetbuf.h"
@@ -209,6 +210,7 @@ neighbor_update(struct neighbor *neighbor, uint8_t *data)
 #endif /* NEIGHBOR_BROADCAST_KEY_LEN */
   
   neighbor_prolong(neighbor);
+  apkes_flash_backup_neighbors();
   apkes_trickle_on_new_neighbor();
   
 #if DEBUG

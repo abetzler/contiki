@@ -44,6 +44,7 @@
 
 #include "net/llsec/coresec/apkes.h"
 #include "net/llsec/coresec/apkes-trickle.h"
+#include "net/llsec/coresec/apkes-flash.h"
 #include "net/llsec/coresec/coresec.h"
 #include "net/llsec/coresec/ebeap.h"
 #include "net/llsec/anti-replay.h"
@@ -55,12 +56,25 @@
 #include "sys/node-id.h"
 #include <string.h>
 
+#ifdef APKES_CONF_MAX_REFRESHS
+#define MAX_REFRESHS              APKES_CONF_MAX_REFRESHS
+#else /* APKES_CONF_MAX_REFRESHS */
+#define MAX_REFRESHS              3
+#endif /* APKES_CONF_MAX_REFRESHS */
+
+#ifdef APKES_CONF_REFRESH_DELAY
+#define REFRESH_DELAY             APKES_CONF_REFRESH_DELAY
+#else /* APKES_CONF_REFRESH_DELAY */
+#define REFRESH_DELAY             3 /* seconds */ 
+#endif /* APKES_CONF_REFRESH_DELAY */
+
 /* Command frame identifiers */
 #define HELLO_IDENTIFIER          0x0A
 #define HELLOACK_IDENTIFIER       0x0B
 #define ACK_IDENTIFIER            0x0C
 #define UPDATE_IDENTIFIER         0x0E
 #define UPDATEACK_IDENTIFIER      0x0F
+#define REFRESH_IDENTIFIER        0x10
 
 #define CHALLENGE_LEN             (NEIGHBOR_PAIRWISE_KEY_LEN/2)
 
@@ -85,6 +99,7 @@ static void send_updateack(struct neighbor *receiver);
 MEMB(wait_timers_memb, struct wait_timer, APKES_MAX_TENTATIVE_NEIGHBORS);
 /* A random challenge, which will be attached to HELLO commands */
 static uint8_t our_challenge[CHALLENGE_LEN];
+static struct ctimer refresh_timer;
 
 /*---------------------------------------------------------------------------*/
 static uint8_t *
@@ -136,6 +151,14 @@ generate_pairwise_key(uint8_t *result, uint8_t *shared_secret)
 {
   CORESEC_SET_PAIRWISE_KEY(shared_secret);
   aes_128_padded_encrypt(result, NEIGHBOR_PAIRWISE_KEY_LEN);
+}
+/*---------------------------------------------------------------------------*/
+static void
+refresh_pairwise_key(struct neighbor* neighbor)
+{
+  CORESEC_SET_PAIRWISE_KEY(neighbor->pairwise_key);
+  memset(neighbor->pairwise_key, 0, NEIGHBOR_PAIRWISE_KEY_LEN);
+  aes_128_padded_encrypt(neighbor->pairwise_key, NEIGHBOR_PAIRWISE_KEY_LEN);
 }
 /*---------------------------------------------------------------------------*/
 void
@@ -357,6 +380,69 @@ on_updateack(struct neighbor *sender, uint8_t *payload)
 }
 /*---------------------------------------------------------------------------*/
 static void
+restore_neighbors(void)
+{
+  struct neighbor *next;
+  struct neighbor *current;
+  
+  apkes_flash_restore_neighbors();
+  next = neighbor_head();
+  while(next) {
+    current = next;
+    next = neighbor_next(current);
+    if(current->status) {
+      PRINTF("apkes: Deleting tentative neighbor %d\n", current->ids.short_addr);
+      neighbor_delete(current);
+    } else {
+      PRINTF("apkes: Refreshing permanent neighbor %d\n", current->ids.short_addr);
+      anti_replay_reset_info(&current->anti_replay_info);
+      refresh_pairwise_key(current);
+    }
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
+broadcast_refresh(void *ptr)
+{
+  static int refresh_count = MAX_REFRESHS;
+  llsec_on_bootstrapped_t on_bootstrapped;
+  
+  if(refresh_count--) {
+    PRINTF("apkes: Broadcasting REFRESH\n");
+      
+    coresec_prepare_command_frame(REFRESH_IDENTIFIER, &linkaddr_null);
+    packetbuf_set_datalen(1);
+    ebeap_send_broadcast(NULL, NULL);
+    
+    ctimer_set(&refresh_timer,
+        REFRESH_DELAY * CLOCK_SECOND,
+        broadcast_refresh,
+        ptr);
+  } else {
+    apkes_flash_backup_neighbors();
+    on_bootstrapped = (llsec_on_bootstrapped_t) ptr;
+    on_bootstrapped();
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
+on_refresh(struct neighbor *sender)
+{
+  uint8_t pairwise_key_backup[NEIGHBOR_PAIRWISE_KEY_LEN];
+  
+  memcpy(pairwise_key_backup, sender->pairwise_key, NEIGHBOR_PAIRWISE_KEY_LEN); 
+  refresh_pairwise_key(sender);
+  if(!ebeap_decrypt_verify_broadcast(sender)) {
+    PRINTF("apkes: Received invalid REFRESH\n");
+    memcpy(sender->pairwise_key, pairwise_key_backup, NEIGHBOR_PAIRWISE_KEY_LEN);
+  } else {
+    PRINTF("apkes: Received valid REFRESH\n");
+    anti_replay_reset_info(&sender->anti_replay_info);
+    apkes_flash_backup_neighbors();
+  }
+}
+/*---------------------------------------------------------------------------*/
+static void
 on_command_frame(uint8_t command_frame_identifier,
     struct neighbor *sender,
     uint8_t *payload)
@@ -387,21 +473,32 @@ on_command_frame(uint8_t command_frame_identifier,
   case UPDATEACK_IDENTIFIER:
     on_updateack(sender, payload);
     break;
+  case REFRESH_IDENTIFIER:
+    on_refresh(sender);
+    break;
   default:
     PRINTF("apkes: Received unknown command with identifier %x \n", command_frame_identifier);
   }
 }
 /*---------------------------------------------------------------------------*/
-void
-apkes_init(void)
+static void
+bootstrap(llsec_on_bootstrapped_t on_bootstrapped)
 {
   memb_init(&wait_timers_memb);
   APKES_SCHEME.init();
+  
+  restore_neighbors();
+  if(neighbor_head()) {
+    broadcast_refresh(on_bootstrapped);
+    apkes_trickle_bootstrap(NULL);
+  } else {
+    apkes_trickle_bootstrap(on_bootstrapped);
+  }
 }
 /*---------------------------------------------------------------------------*/
 const struct coresec_scheme apkes_coresec_scheme = {
   apkes_trickle_is_bootstrapped,
-  apkes_trickle_bootstrap,
+  bootstrap,
   on_command_frame
 };
 /*---------------------------------------------------------------------------*/

@@ -50,6 +50,9 @@
 void apkes_flash_erase_keying_material(void);
 void apkes_flash_append_keying_material(void *keying_material, uint16_t len);
 void apkes_flash_restore_keying_material(void *keying_material, uint16_t len, uint16_t offset);
+void apkes_flash_erase_neighbors(void);
+void apkes_flash_backup_neighbors(void);
+void apkes_flash_restore_neighbors(void);
 
 #endif /* APKES_FLASH_H_ */
 

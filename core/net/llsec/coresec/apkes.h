@@ -97,7 +97,6 @@ extern const struct apkes_scheme APKES_SCHEME;
 extern const struct coresec_scheme apkes_coresec_scheme;
 
 void apkes_broadcast_hello(void);
-void apkes_init(void);
 void apkes_send_update(struct neighbor *receiver);
 
 #endif /* APKES_H_ */

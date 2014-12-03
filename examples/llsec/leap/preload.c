@@ -104,6 +104,7 @@ PROCESS_THREAD(preload_process, ev, data)
   watchdog_stop();
   leds_on(LEDS_RED);
   
+  apkes_flash_erase_neighbors();
   preload();
   
   leds_on(LEDS_BLUE);

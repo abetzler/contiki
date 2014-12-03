@@ -68,6 +68,11 @@ uint32_t anti_replay_get_counter(void);
 void anti_replay_init_info(struct anti_replay_info *info);
 
 /**
+ * \brief Resets the anti-replay information about the sender
+ */
+void anti_replay_reset_info(struct anti_replay_info *info);
+
+/**
  * \brief               Checks if received frame was replayed
  * \param last_counters Anti-replay information about the sender
  * \retval 0            <-> received frame was not replayed

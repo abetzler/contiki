@@ -80,6 +80,13 @@ anti_replay_init_info(struct anti_replay_info *info)
       = anti_replay_get_counter();
 }
 /*---------------------------------------------------------------------------*/
+void
+anti_replay_reset_info(struct anti_replay_info *info)
+{
+  info->last_broadcast_counter = 0;
+  info->last_unicast_counter = 0;
+}
+/*---------------------------------------------------------------------------*/
 int
 anti_replay_was_replayed(struct anti_replay_info *info)
 {

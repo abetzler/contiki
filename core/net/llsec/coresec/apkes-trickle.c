@@ -201,7 +201,6 @@ void
 apkes_trickle_bootstrap(llsec_on_bootstrapped_t on_bootstrapped_param)
 {
   on_bootstrapped = on_bootstrapped_param;
-  apkes_init();
   on_timeout(NULL);
 }
 /*---------------------------------------------------------------------------*/

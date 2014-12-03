@@ -45,6 +45,14 @@
 
 static unsigned short keying_material_offset;
 
+#define DEBUG 0
+#if DEBUG
+#include <stdio.h>
+#define PRINTF(...) printf(__VA_ARGS__)
+#else /* DEBUG */
+#define PRINTF(...)
+#endif /* DEBUG */
+
 /*---------------------------------------------------------------------------*/
 void
 apkes_flash_erase_keying_material(void)
@@ -64,5 +72,55 @@ void
 apkes_flash_restore_keying_material(void *keying_material, uint16_t len, uint16_t offset)
 {
   xmem_pread(keying_material, len, APKES_FLASH_KEYING_MATERIAL_OFFSET + offset);
+}
+/*---------------------------------------------------------------------------*/
+void
+apkes_flash_erase_neighbors(void)
+{
+  xmem_erase(XMEM_ERASE_UNIT_SIZE, APKES_FLASH_NEIGHBORS_OFFSET);
+}
+/*---------------------------------------------------------------------------*/
+void
+apkes_flash_backup_neighbors(void)
+{
+  int count;
+  uint16_t offset;
+  struct neighbor *next;
+  
+  apkes_flash_erase_neighbors();
+  count = neighbor_count();
+  xmem_pwrite(&count, sizeof(int), APKES_FLASH_NEIGHBORS_OFFSET);
+  
+  offset = sizeof(int);
+  next = neighbor_head();
+  while(next) {
+    xmem_pwrite(next, sizeof(struct neighbor), APKES_FLASH_NEIGHBORS_OFFSET + offset);
+    offset += sizeof(struct neighbor);
+    PRINTF("apkes-flash: Backed up neighbor %d\n", next->ids.short_addr);
+    
+    next = neighbor_next(next);
+  }
+}
+/*---------------------------------------------------------------------------*/
+void
+apkes_flash_restore_neighbors(void)
+{
+  int count;
+  uint16_t offset;
+  struct neighbor *restored_neighbor;
+  struct neighbor *next;
+  
+  xmem_pread(&count, sizeof(int), APKES_FLASH_NEIGHBORS_OFFSET);
+  offset = sizeof(int);
+  
+  while(count--) {
+    restored_neighbor = neighbor_new();
+    next = restored_neighbor->next;
+    xmem_pread(restored_neighbor, sizeof(struct neighbor), APKES_FLASH_NEIGHBORS_OFFSET + offset);
+    offset += sizeof(struct neighbor);
+    restored_neighbor->next = next;
+    
+    PRINTF("apkes-flash: Restored neighbor %d\n", restored_neighbor->ids.short_addr);
+  }
 }
 /*---------------------------------------------------------------------------*/
