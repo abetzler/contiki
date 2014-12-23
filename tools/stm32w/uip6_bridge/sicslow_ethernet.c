@@ -154,7 +154,7 @@
 #include "net/ipv6/sicslowpan.h"
 #include "sicslow_ethernet.h"
 #include "dev/stm32w-radio.h"
-#include "net/mac/frame802154.h"
+#include "net/mac/framer-802154.h"
 #include "dev/slip.h"
 #include "dev/leds.h"
 
@@ -875,7 +875,6 @@ void mac_logTXtoEthernet(frame_create_params_t *p,frame_result_t *frame_result)
 void mac_802154raw(const struct radio_driver *radio)
 {
   uint8_t len;
-  frame802154_t frame;
   struct uip_eth_addr * eth_src, * eth_dest;
   eth_src = &ETHBUF(uip_buf)->src;
   eth_dest = &ETHBUF(uip_buf)->dest;
@@ -885,12 +884,12 @@ void mac_802154raw(const struct radio_driver *radio)
 #else
   len = radio->read(UIP_IP_BUF, STM32W_MAX_PACKET_LEN);
   if(len > 0) {
-    if(frame802154_parse(&uip_buf[UIP_LLH_LEN], len, &frame)) {
+    if(framer_802154_just_parse() >= 0) {
         
         struct uip_802154_longaddr * lowpan_src, * lowpan_dest;               
         
-        lowpan_src = (struct uip_802154_longaddr *)&frame.src_addr;
-        lowpan_dest = (struct uip_802154_longaddr *)&frame.dest_addr;
+        lowpan_src = (struct uip_802154_longaddr *) packetbuf_addr(PACKETBUF_ADDR_SENDER)->u8;
+        lowpan_dest = (struct uip_802154_longaddr *) packetbuf_addr(PACKETBUF_ADDR_RECEIVER)->u8;
         
         // Fake Ethernet addresses.
 
@@ -902,9 +901,7 @@ void mac_802154raw(const struct radio_driver *radio)
         eth_src->addr[5] = lowpan_src->addr[7];
         
         
-        if( (frame.fcf.dest_addr_mode == FRAME802154_SHORTADDRMODE) &&
-           (frame.dest_addr[0] == 0xff)&&
-               (frame.dest_addr[1] == 0xff) ) {  
+        if(packetbuf_holds_broadcast()) {  
             memset(eth_dest->addr, 0xff, 6);
         }
         else {
