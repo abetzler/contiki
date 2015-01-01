@@ -117,29 +117,55 @@ PROCESS(apkes_process, "apkes_process");
 static llsec_on_bootstrapped_t on_bootstrapped;
 
 /*---------------------------------------------------------------------------*/
-static void
-generate_pairwise_key(struct neighbor *neighbor, uint8_t *shared_secret)
+static uint8_t *
+prepare_update_command(uint8_t command_frame_identifier,
+    struct neighbor *receiver,
+    uint8_t *extra_data,
+    uint8_t extra_data_len)
 {
-  CORESEC_SET_PAIRWISE_KEY(shared_secret);
-  aes_128_padded_encrypt(neighbor->metadata, NEIGHBOR_PAIRWISE_KEY_LEN);
+  uint8_t *payload;
+  uint8_t payload_len;
+  
+  payload = coresec_prepare_command_frame(command_frame_identifier,
+      &receiver->ids.extended_addr);
+#if EBEAP_WITH_ENCRYPTION
+  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL | (1 << 2));
+#else /* EBEAP_WITH_ENCRYPTION */
+  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL & 3);
+#endif /* EBEAP_WITH_ENCRYPTION */
+  
+  /* write payload */
+  memcpy(payload, extra_data, extra_data_len);
+  payload += extra_data_len;
+  memcpy(payload, &node_id, NEIGHBOR_SHORT_ADDR_LEN);
+  payload += NEIGHBOR_SHORT_ADDR_LEN;
+  payload[0] = receiver->local_index;
+  payload++;
+#if EBEAP_WITH_ENCRYPTION
+  memcpy(payload, ebeap_broadcast_key, NEIGHBOR_BROADCAST_KEY_LEN);
+  payload += NEIGHBOR_BROADCAST_KEY_LEN;
+#endif /* EBEAP_WITH_ENCRYPTION */
+  
+  payload_len = 1                   /* command frame identifier */
+      + extra_data_len
+      + NEIGHBOR_SHORT_ADDR_LEN     /* short address */
+      + 1                           /* local index */
+      + NEIGHBOR_BROADCAST_KEY_LEN; /* broadcast key */
+  
+  packetbuf_set_datalen(payload_len);
+#if EBEAP_WITH_ENCRYPTION
+  packetbuf_set_attr(PACKETBUF_ATTR_UNENCRYPTED_PAYLOAD_BYTES,
+      payload_len - NEIGHBOR_BROADCAST_KEY_LEN);
+#endif /* EBEAP_WITH_ENCRYPTION */
+  
+  return payload;
 }
 /*---------------------------------------------------------------------------*/
-static uint8_t *
-get_pairwise_key_with(struct neighbor *neighbor)
+static void
+generate_pairwise_key(uint8_t *result, uint8_t *shared_secret)
 {
-  uint8_t *key;
-  
-  if(neighbor->status == NEIGHBOR_TENTATIVE_AWAITING_ACK) {
-    /* sending a message to a tentative neighbor --> must be HELLOACK */
-    key = APKES_SCHEME.get_secret_with_hello_sender(&neighbor->ids);
-    if(key) {
-      generate_pairwise_key(neighbor, key);
-    }
-  } else {
-    key = neighbor->pairwise_key;
-  }
-  
-  return key;
+  CORESEC_SET_PAIRWISE_KEY(shared_secret);
+  aes_128_padded_encrypt(result, NEIGHBOR_PAIRWISE_KEY_LEN);
 }
 /*---------------------------------------------------------------------------*/
 static void
@@ -221,37 +247,21 @@ wait_callback(void *ptr)
 static void
 send_helloack(struct neighbor *receiver)
 {
-  uint8_t *payload;
-  
-  payload = coresec_prepare_command_frame(HELLOACK_IDENTIFIER, &receiver->ids.extended_addr);
-#if EBEAP_WITH_ENCRYPTION
-  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL | (1 << 2));
-  packetbuf_set_attr(PACKETBUF_ATTR_KEY_ID_MODE, FRAME802154_5_BYTE_KEY_ID_MODE);
-  packetbuf_set_attr(PACKETBUF_ATTR_KEY_INDEX, HELLOACK_IDENTIFIER);
-  packetbuf_set_attr(PACKETBUF_ATTR_KEY_SOURCE_BYTES_0_1, node_id);
-#else /* EBEAP_WITH_ENCRYPTION */
-  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL & 3);
-#endif /* EBEAP_WITH_ENCRYPTION */
+  uint8_t *secret;
   
   /* write payload */
-  memcpy(payload, receiver->metadata, 2 * CHALLENGE_LEN);
-  payload += 2 * CHALLENGE_LEN;
-  memcpy(payload, &receiver->local_index, 1);
-  payload += 1;
-#if EBEAP_WITH_ENCRYPTION
-  memcpy(payload, ebeap_broadcast_key, NEIGHBOR_BROADCAST_KEY_LEN);
-#else /* EBEAP_WITH_ENCRYPTION */
-  memcpy(payload, &node_id, NEIGHBOR_SHORT_ADDR_LEN);
-#endif /* EBEAP_WITH_ENCRYPTION */
+  prepare_update_command(HELLOACK_IDENTIFIER,
+      receiver,
+      receiver->metadata + CHALLENGE_LEN,
+      CHALLENGE_LEN);
   
-  packetbuf_set_datalen(1            /* command frame identifier */
-      + 2 * CHALLENGE_LEN            /* Neighbor's challenge || Our challenge */
-      + 1                            /* local index of receiver */
-#if EBEAP_WITH_ENCRYPTION
-      + NEIGHBOR_BROADCAST_KEY_LEN); /* broadcast key */
-#else /* EBEAP_WITH_ENCRYPTION */
-      + NEIGHBOR_SHORT_ADDR_LEN);    /* short address */
-#endif /* EBEAP_WITH_ENCRYPTION */
+  /* generate pairwise key */
+  secret = APKES_SCHEME.get_secret_with_hello_sender(&receiver->ids);
+  if(!secret) {
+    PRINTF("apkes: could not get secret with HELLO sender\n");
+    return;
+  }
+  generate_pairwise_key(receiver->pairwise_key, secret);
   
   coresec_send_command_frame();
 }
@@ -260,25 +270,28 @@ static void
 on_helloack(struct neighbor *sender, uint8_t *payload)
 {
   struct neighbor_ids ids;
-  uint8_t *key;
-#if EBEAP_WITH_ENCRYPTION
-  uint16_t short_addr;
-#endif /* EBEAP_WITH_ENCRYPTION */
+  uint8_t *secret;
+  uint8_t key[NEIGHBOR_PAIRWISE_KEY_LEN];
   
   PRINTF("apkes: Received HELLOACK\n");
   
-#if EBEAP_WITH_ENCRYPTION
-  short_addr = packetbuf_attr(PACKETBUF_ATTR_KEY_SOURCE_BYTES_0_1);
-  neighbor_update_ids(&ids, &short_addr);
-#else /* EBEAP_WITH_ENCRYPTION */
-  neighbor_update_ids(&ids,
-      payload + 2 * CHALLENGE_LEN + 1 + NEIGHBOR_BROADCAST_KEY_LEN);
-#endif /* EBEAP_WITH_ENCRYPTION */
+  neighbor_update_ids(&ids, payload + CHALLENGE_LEN);
+  secret = APKES_SCHEME.get_secret_with_helloack_sender(&ids);
+  if(!secret) {
+    PRINTF("apkes: could not get secret with HELLOACK sender\n");
+    return;
+  }
   
-  key = APKES_SCHEME.get_secret_with_helloack_sender(&ids);
-  if(!key
-      || !coresec_decrypt_verify_unicast(key)
-      || (memcmp(our_challenge, payload, CHALLENGE_LEN) != 0)) {
+  /* copy challenges and generate key */
+  memcpy(key,
+      our_challenge,
+      CHALLENGE_LEN);
+  memcpy(key + CHALLENGE_LEN,
+      payload,
+      CHALLENGE_LEN);
+  generate_pairwise_key(key, secret);
+  
+  if(!coresec_decrypt_verify_unicast(key)) {
     PRINTF("apkes: Invalid HELLOACK\n");
     return;
   }
@@ -303,38 +316,15 @@ on_helloack(struct neighbor *sender, uint8_t *payload)
     }
   }
   
-  memcpy(sender->metadata, payload, 2 * CHALLENGE_LEN);
-  generate_pairwise_key(sender, key);
-  sender->ids = ids;
-  neighbor_update(sender, payload + 2 * CHALLENGE_LEN);
-  
+  memcpy(sender->pairwise_key, key, NEIGHBOR_PAIRWISE_KEY_LEN);
+  neighbor_update(sender, payload + CHALLENGE_LEN);
   send_ack(sender);
 }
 /*---------------------------------------------------------------------------*/
 static void
 send_ack(struct neighbor *receiver)
 {
-  uint8_t *payload;
-  
-  payload = coresec_prepare_command_frame(ACK_IDENTIFIER, &receiver->ids.extended_addr);
-#if EBEAP_WITH_ENCRYPTION
-  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL | (1 << 2));
-  packetbuf_set_attr(PACKETBUF_ATTR_KEY_ID_MODE, FRAME802154_1_BYTE_KEY_ID_MODE);
-  packetbuf_set_attr(PACKETBUF_ATTR_KEY_INDEX, ACK_IDENTIFIER);
-#else /* EBEAP_WITH_ENCRYPTION */
-  coresec_add_security_header(LLSEC802154_SECURITY_LEVEL & 3);
-#endif /* EBEAP_WITH_ENCRYPTION */
-  
-  /* write payload */
-  memcpy(payload, &receiver->local_index, 1);
-#if EBEAP_WITH_ENCRYPTION
-  memcpy(payload + 1, ebeap_broadcast_key, NEIGHBOR_BROADCAST_KEY_LEN);
-#endif /* EBEAP_WITH_ENCRYPTION */
-  
-  packetbuf_set_datalen(1            /* command frame identifier */
-      + 1                            /* local index of receiver */
-      + NEIGHBOR_BROADCAST_KEY_LEN); /* broadcast key */
-  
+  prepare_update_command(ACK_IDENTIFIER, receiver, NULL, 0);
   coresec_send_command_frame();
 }
 /*---------------------------------------------------------------------------*/
@@ -358,6 +348,16 @@ on_command_frame(uint8_t command_frame_identifier,
     struct neighbor *sender,
     uint8_t *payload)
 {
+#if EBEAP_WITH_ENCRYPTION
+  switch(command_frame_identifier) {
+  case HELLOACK_IDENTIFIER:
+  case ACK_IDENTIFIER:
+    packetbuf_set_attr(PACKETBUF_ATTR_UNENCRYPTED_PAYLOAD_BYTES,
+        packetbuf_datalen() - NEIGHBOR_BROADCAST_KEY_LEN - CORESEC_UNICAST_MIC_LENGTH);
+    break;
+  }
+#endif /* EBEAP_WITH_ENCRYPTION */
+  
   switch(command_frame_identifier) {
   case HELLO_IDENTIFIER:
     on_hello(sender, payload);
@@ -413,8 +413,7 @@ is_bootstrapped()
 const struct coresec_scheme apkes_coresec_scheme = {
   is_bootstrapped,
   bootstrap,
-  on_command_frame,
-  get_pairwise_key_with
+  on_command_frame
 };
 /*---------------------------------------------------------------------------*/
 

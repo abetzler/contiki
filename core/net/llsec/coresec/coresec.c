@@ -134,18 +134,9 @@ dispatch_command_frame(struct neighbor *sender)
   uint8_t command_frame_identifier;
   
   payload = (uint8_t *) packetbuf_dataptr();
-  
-#if LLSEC802154_USES_EXPLICIT_KEYS
-  if(packetbuf_attr(PACKETBUF_ATTR_KEY_ID_MODE)) {
-    command_frame_identifier = packetbuf_attr(PACKETBUF_ATTR_KEY_INDEX);
-  } else {
-    command_frame_identifier = payload[0];
-  }
-#else /* LLSEC802154_USES_EXPLICIT_KEYS */
   command_frame_identifier = payload[0];
-#endif /* LLSEC802154_USES_EXPLICIT_KEYS */
-  
   payload += 1;
+  
   if(command_frame_identifier == EBEAP_ANNOUNCE_IDENTIFIER) {
     ebeap_on_announce(sender, payload);
   } else {
@@ -173,7 +164,6 @@ on_frame_created(void)
 {
   uint8_t sec_lvl;
   struct neighbor *neighbor;
-  uint8_t *key;
   uint8_t *dataptr;
   uint8_t datalen;
   
@@ -184,15 +174,10 @@ on_frame_created(void)
       return 0;
     }
     
-    key = CORESEC_SCHEME.get_pairwise_key_with(neighbor);
-    if(!key) {
-      return 0;
-    }
-    
     dataptr = packetbuf_dataptr();
     datalen = packetbuf_datalen();
     
-    CORESEC_SET_PAIRWISE_KEY(key);
+    CORESEC_SET_PAIRWISE_KEY(neighbor->pairwise_key);
     CCM_STAR.mic(linkaddr_node_addr.u8, dataptr + datalen, CORESEC_UNICAST_MIC_LENGTH);
 #if LLSEC802154_USES_ENCRYPTION
     if(sec_lvl & (1 << 2)) {

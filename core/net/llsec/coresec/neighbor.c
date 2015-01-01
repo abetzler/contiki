@@ -154,6 +154,8 @@ neighbor_update_ids(struct neighbor_ids *ids, void *short_addr)
 void
 neighbor_update(struct neighbor *neighbor, uint8_t *data)
 {
+  neighbor_update_ids(&neighbor->ids, data);
+  data += NEIGHBOR_SHORT_ADDR_LEN;
   anti_replay_init_info(&neighbor->anti_replay_info);
   neighbor->status = NEIGHBOR_PERMANENT;
   neighbor->foreign_index = data[0];
