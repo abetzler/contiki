@@ -28,6 +28,7 @@
 #define LLSEC802154_CONF_SECURITY_LEVEL   2
 #define APKES_CONF_SCHEME                 leap_apkes_scheme
 #include "net/llsec/coresec/coresec-autoconf.h"
+#define APKES_CONF_WITH_SCREWED 1
 
 /* Disables TCP */
 #define UIP_CONF_TCP 0
