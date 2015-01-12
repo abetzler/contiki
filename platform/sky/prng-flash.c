@@ -38,21 +38,30 @@
  */
 
 #include "sys/prng-flash.h"
-#include "contiki-conf.h"
+#include "contiki.h"
 #include "dev/xmem.h"
 #include "lib/prng.h"
 
 /*---------------------------------------------------------------------------*/
-void
-prng_flash_preload_seed(uint8_t *seed)
+static void
+preload(uint8_t *seed, uint32_t resets)
 {
   xmem_erase(XMEM_ERASE_UNIT_SIZE, PRNG_FLASH_SEED_OFFSET);
   xmem_pwrite(seed, PRNG_SEED_LEN, PRNG_FLASH_SEED_OFFSET);
+  xmem_pwrite(&resets, sizeof(uint32_t), PRNG_FLASH_SEED_OFFSET + PRNG_SEED_LEN);
+}
+/*---------------------------------------------------------------------------*/
+void
+prng_flash_preload_seed(uint8_t *seed)
+{
+  preload(seed, 0);
 }
 /*---------------------------------------------------------------------------*/
 void
 prng_flash_restore_seed(void)
 {
   xmem_pread(prng_seed, PRNG_SEED_LEN, PRNG_FLASH_SEED_OFFSET);
+  xmem_pread(&prng_node_resets, sizeof(prng_node_resets), PRNG_FLASH_SEED_OFFSET + PRNG_SEED_LEN);
+  preload(prng_seed, prng_node_resets + 1);
 }
 /*---------------------------------------------------------------------------*/

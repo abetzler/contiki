@@ -44,6 +44,7 @@
 
 static uint32_t nonce;
 uint8_t prng_seed[PRNG_SEED_LEN];
+uint32_t prng_node_resets;
 
 /*---------------------------------------------------------------------------*/
 void
@@ -53,6 +54,7 @@ prng_rand(void *result, uint8_t len)
   
   nonce++;
   memcpy(block, &nonce, sizeof(nonce));
+  memcpy(block + sizeof(nonce), &prng_node_resets, sizeof(prng_node_resets));
   AES_128.set_key(prng_seed);
   AES_128.encrypt(block);
   memcpy(result, block, len);

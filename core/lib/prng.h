@@ -40,11 +40,12 @@
 #ifndef PRNG_H_
 #define PRNG_H_
 
-#include "contiki-conf.h"
+#include "contiki.h"
 
 #define PRNG_SEED_LEN 16
 
 extern uint8_t prng_seed[PRNG_SEED_LEN];
+extern uint32_t prng_node_resets;
 
 /**
  * \brief Generates a len-byte pseudorandom number, where len <= 16.
